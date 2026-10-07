@@ -5,7 +5,7 @@ on:
   workflow_dispatch:
 
 permissions:
-  contents: write   # lets the job attach the APK to a GitHub Release
+  contents: write
 
 jobs:
   build:
@@ -18,9 +18,6 @@ jobs:
           distribution: temurin
           java-version: "17"
 
-      # GitHub's runner image already ships the Android SDK (ANDROID_HOME is set), so no setup action
-      # is needed; the third-party one crashed in its own sdkmanager step. Accept licenses so the
-      # Android Gradle Plugin can download any platform it is missing.
       - name: Prepare Android SDK
         shell: bash
         run: |
@@ -33,7 +30,6 @@ jobs:
         with:
           gradle-version: 8.10.2
 
-      # Works however the project was uploaded: as nova.zip, as loose files, or inside a folder.
       - name: Find the project
         id: locate
         shell: bash
@@ -53,6 +49,25 @@ jobs:
           echo "Project folder: $DIR"
           echo "dir=$DIR" >> "$GITHUB_OUTPUT"
 
+      - name: Apply overrides
+        shell: bash
+        run: |
+          if [ -d overrides ]; then
+            cp -rv overrides/. "${{ steps.locate.outputs.dir }}/"
+          else
+            echo "no overrides folder"
+          fi
+
+      - name: Apply export fixes
+        shell: bash
+        run: |
+          F="${{ steps.locate.outputs.dir }}/app/src/main/java/com/nova/export/NovaExporter.kt"
+          if [ -f "$F" ]; then
+            sed -i 's/import androidx.media3.common.Effects/import androidx.media3.transformer.Effects/' "$F"
+            sed -i 's/Composition.Builder(\*sequences.toTypedArray())/Composition.Builder(sequences)/' "$F"
+            grep -n "Effects\|Composition.Builder" "$F" || true
+          fi
+
       - name: Build debug APK
         working-directory: ${{ steps.locate.outputs.dir }}
         shell: bash
@@ -65,7 +80,6 @@ jobs:
           name: Nova debug build ${{ github.run_number }}
           files: ${{ steps.locate.outputs.dir }}/app/build/outputs/apk/debug/app-debug.apk
 
-      # When the build fails, print just the error lines at the top of the run page (readable on a phone).
       - name: Show errors in the run summary
         if: always() && steps.locate.outputs.dir != ''
         shell: bash
@@ -85,7 +99,6 @@ jobs:
             echo '```'
           } >> "$GITHUB_STEP_SUMMARY"
 
-      # Tests run AFTER the APK is published, so a failing test never blocks your build.
       - name: Run unit tests (informational)
         if: always() && steps.locate.outputs.dir != ''
         working-directory: ${{ steps.locate.outputs.dir }}
